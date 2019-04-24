@@ -1,0 +1,7 @@
+*.hex
+
+*.o
+
+teensy.exe
+
+**/Debug
