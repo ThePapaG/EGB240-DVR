@@ -5,3 +5,6 @@
 teensy.exe
 
 **/Debug
+**/.vs
+**/.vscode
+*.raw
