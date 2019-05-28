@@ -58,7 +58,7 @@ enum {
 /************************************************************************/
 uint16_t pageCount = 0;	// Page counter - used to terminate recording
 uint16_t newPage = 0;	// Flag that indicates a new page is available for read/write
-uint8_t stop = 0, record = 0, play = 0, stopped = 0;		// Flag that indicates playback/recording is complete
+uint8_t stop = 0, record = 0, play = 0, stopped = 0, playing = 0;		// Flag that indicates playback/recording is complete
 
 /************************************************************************/
 /* FUNCTION PROTOTYPES                                                  */
@@ -81,6 +81,25 @@ void clock_init() {
 	CLKPR = 0x00;	// Prescaler /1, 16 MHz
 }
 
+void timer1_init() {
+	OCR1A = 1024;
+	OCR1B = 1024;
+	TCCR1A = 0b00100011;
+	TCCR1B = 0b0001100;
+	
+	DDRB |= (1<<PINB6);
+}
+
+void start_playback(){
+	TIMSK1 = 0b00000100;
+	TCCR1B |= (1<<0);
+}
+
+void stop_playback(){
+	TIMSK1 = 0b00000000;
+	TCCR1B &= ~(1<<0);
+}
+
 // Initialise DVR subsystems and enable interrupts
 void init() {
 	cli();			// Disable interrupts
@@ -88,6 +107,7 @@ void init() {
 	pll_init();     // Configure PLL (used by Timer4 and USB serial)
 	serial_init();	// Initialise USB serial interface (debug)
 	timer_init();	// Initialise timer (used by FatFs library)
+	timer1_init();
 	buffer_init(pageFull, pageEmpty);  // Initialise circular buffer (must specify callback functions)
 	adc_init();		// Initialise ADC
 	sei();			// Enable interrupts
@@ -100,6 +120,8 @@ void init() {
 	// Must be called after interrupts are enabled
 	wave_init();	// Initialise WAVE file interface
 }
+
+
 
 /************************************************************************/
 /* CALLBACK FUNCTIONS FOR CIRCULAR BUFFER                               */
@@ -119,6 +141,14 @@ void pageFull() {
 // CALLED FROM BUFFER MODULE WHEN A NEW PAGE HAS BEEN EMPTIED
 void pageEmpty() {
 	// TODO: Implement code to handle "page empty" callback 
+	printf("page empty");
+	if(!(--pageCount)){
+		stop_playback();
+		stop = 1;
+		//stop playback
+	}else{
+		newPage = 1;
+	}
 }
 
 /************************************************************************/
@@ -142,6 +172,27 @@ void dvr_record() {
 }
 
 // TODO: Implement code to initiate playback and to stop recording/playback.
+void dvr_play(){
+	buffer_reset();
+	
+	uint32_t samples = wave_open();
+	pageCount = samples/512;
+
+	printf("%i", pageCount);
+	printf("%i", samples);
+	wave_read(buffer_writePage(), 512);
+	start_playback();
+	OCR1B = (buffer_dequeue()/255) * 1024;
+
+	PORTD |= (1<<PIND4);
+	PORTD &= ~(1<<PIND5);
+	PORTD &= ~(1<<PIND6);
+}
+
+ISR(TIMER1_COMPB_vect){
+	OCR1B = buffer_dequeue() * 4.0156862745098;
+	printf("\tOCR1B : %i", OCR1B);
+}
 
 /************************************************************************/
 /* MAIN LOOP (CODE ENTRY)                                               */
@@ -153,6 +204,7 @@ int main(void) {
 	init();	
 	
 	while(!serial_ready());
+	printf("Setup done\n");
 
 	// Loop forever (state machine)
     for(;;) {
@@ -177,6 +229,8 @@ int main(void) {
 				stopped = 1;
 			break;
 		}
+
+		//printf("Checking main loop\n");
 		
 		// Switch depending on state
 		switch (state) {
@@ -187,13 +241,14 @@ int main(void) {
 
 				 //TODO: Implement code to initiate recording
 				 if (record) {
-					printf("Recording...");	// Output status to console
+					printf("Recording...\n");	// Output status to console
 					dvr_record();			// Initiate recording
 					state = DVR_RECORDING;	// Transition to "recording" state
 				 }
 				 
 				 if(play){
-					 printf("Playback...");
+					 printf("Playback...\n");
+					 dvr_play();
 					 state = DVR_PLAYING;
 				 }
 				break;
@@ -214,24 +269,34 @@ int main(void) {
 					wave_write(buffer_readPage(), 512);	// Write final page
 					wave_close();						// Finalise WAVE file 
 					printf("DONE!\n");					// Print status to console
-					state = DVR_STOPPED;				// Transition to stopped state
+					state = DVR_STOPPED;				// Transition to stopped state111
 					record = 0;
 					play = 0;
 					stopped = 0;
 				}
 				break;
-			case DVR_PLAYING:
-				PORTD |= (1<<PIND4);
-				PORTD &= ~(1<<PIND5);
-				PORTD &= ~(1<<PIND6);
+			case DVR_PLAYING:				
+				// TODO: Implement playback functionality
+
+				if(stopped){
+					stop = 1;			
+				}
 				
-				if(stop){
+				if(newPage){
+					newPage = 0;
+					printf("%i", pageCount);
+					wave_read(buffer_writePage(), 512);
+				}else if(stop){
+					stop = 0;
+					OCR1B = 0;
+					wave_close();
+					stop_playback();
+					printf("Done!\n");
 					state = DVR_STOPPED;
 					record = 0;
 					play = 0;
+					stopped = 0;
 				}
-				
-				// TODO: Implement playback functionality
 				break;
 			default:
 				// Invalid state, return to valid idle state (stopped)

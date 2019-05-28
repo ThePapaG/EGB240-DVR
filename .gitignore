@@ -8,3 +8,4 @@ teensy.exe
 **/.vs
 **/.vscode
 *.raw
+*.zip
