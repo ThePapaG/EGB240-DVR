@@ -1,23 +1,23 @@
 /**
  * main.c - EGB240 Digital Voice Recorder Skeleton Code
  *
- * This code provides a skeleton implementation of a digital voice 
- * recorder using the Teensy microcontroller and QUT TensyBOBv2 
+ * This code provides a skeleton implementation of a digital voice
+ * recorder using the Teensy microcontroller and QUT TensyBOBv2
  * development boards. This skeleton code demonstrates usage of
  * the EGB240DVR library, which provides functions for recording
- * audio samples from the ADC, storing samples temporarily in a 
+ * audio samples from the ADC, storing samples temporarily in a
  * circular buffer, and reading/writing samples to/from flash
  * memory on an SD card (using the FAT file system and WAVE file
- * format. 
+ * format.
  *
- * This skeleton code provides a recording implementation which 
- * samples CH0 of the ADC at 8-bit, 15.625kHz. Samples are stored 
- * in flash memory on an SD card in the WAVE file format. The 
- * filename is set to "EGB240.WAV". The SD card must be formatted 
- * with the FAT file system. Recorded WAVE files are playable on 
+ * This skeleton code provides a recording implementation which
+ * samples CH0 of the ADC at 8-bit, 15.625kHz. Samples are stored
+ * in flash memory on an SD card in the WAVE file format. The
+ * filename is set to "EGB240.WAV". The SD card must be formatted
+ * with the FAT file system. Recorded WAVE files are playable on
  * a computer.
- * 
- * LED4 on the TeensyBOBv2 is configured to flash as an 
+ *
+ * LED4 on the TeensyBOBv2 is configured to flash as an
  * indicator that the programme is running; a 1 Hz, 50 % duty
  * cycle flash should be observed under normal operation.
  *
@@ -28,7 +28,7 @@
  *    Date: 10/04/2016
  *  Author: Mark Broadmeadow
  *  E-mail: mark.broadmeadow@qut.edu.au
- */  
+ */
 
  /************************************************************************/
  /* INCLUDED LIBRARIES/HEADER FILES                                      */
@@ -83,21 +83,21 @@ void clock_init() {
 
 void timer1_init() {
 	OCR1A = 1024;
-	OCR1B = 1024;
+	OCR1B = 0;
 	TCCR1A = 0b00100011;
-	TCCR1B = 0b0001100;
-	
+	TCCR1B = 0b00011000;
+
 	DDRB |= (1<<PINB6);
 }
 
 void start_playback(){
 	TIMSK1 = 0b00000100;
-	TCCR1B |= (1<<0);
+	TCCR1B = 0b00011001;
 }
 
 void stop_playback(){
 	TIMSK1 = 0b00000000;
-	TCCR1B &= ~(1<<0);
+	TCCR1B &= ~(1<<1);
 }
 
 // Initialise DVR subsystems and enable interrupts
@@ -111,12 +111,12 @@ void init() {
 	buffer_init(pageFull, pageEmpty);  // Initialise circular buffer (must specify callback functions)
 	adc_init();		// Initialise ADC
 	sei();			// Enable interrupts
-	
+
 	//set LEDs to outputs
 	DDRD |= (1<<4);
 	DDRD |= (1<<5);
 	DDRD |= (1<<6);
-	
+
 	// Must be called after interrupts are enabled
 	wave_init();	// Initialise WAVE file interface
 }
@@ -140,7 +140,7 @@ void pageFull() {
 
 // CALLED FROM BUFFER MODULE WHEN A NEW PAGE HAS BEEN EMPTIED
 void pageEmpty() {
-	// TODO: Implement code to handle "page empty" callback 
+	// TODO: Implement code to handle "page empty" callback
 	printf("page empty");
 	if(!(--pageCount)){
 		stop_playback();
@@ -158,10 +158,10 @@ void pageEmpty() {
 // Initiates a record cycle
 void dvr_record() {
 	buffer_reset();		// Reset buffer state
-	
+
 	pageCount = 305;	// Maximum record time of 10 sec
 	newPage = 0;		// Clear new page flag
-	
+
 	wave_create();		// Create new wave file on the SD card
 	adc_start();		// Begin sampling
 
@@ -174,7 +174,7 @@ void dvr_record() {
 // TODO: Implement code to initiate playback and to stop recording/playback.
 void dvr_play(){
 	buffer_reset();
-	
+
 	uint32_t samples = wave_open();
 	pageCount = samples/512;
 
@@ -182,7 +182,7 @@ void dvr_play(){
 	printf("%i", samples);
 	wave_read(buffer_writePage(), 512);
 	start_playback();
-	OCR1B = (buffer_dequeue()/255) * 1024;
+	OCR1B = (buffer_dequeue() * 4);
 
 	PORTD |= (1<<PIND4);
 	PORTD &= ~(1<<PIND5);
@@ -190,7 +190,7 @@ void dvr_play(){
 }
 
 ISR(TIMER1_COMPB_vect){
-	OCR1B = buffer_dequeue() * 4.0156862745098;
+	OCR1B = buffer_dequeue() * 4;
 	printf("\tOCR1B : %i", OCR1B);
 }
 
@@ -199,10 +199,10 @@ ISR(TIMER1_COMPB_vect){
 /************************************************************************/
 int main(void) {
 	uint8_t state = DVR_STOPPED;	// Start DVR in stopped state
-	
+
 	// Initialisation
-	init();	
-	
+	init();
+
 	while(!serial_ready());
 	printf("Setup done\n");
 
@@ -231,7 +231,7 @@ int main(void) {
 		}
 
 		//printf("Checking main loop\n");
-		
+
 		// Switch depending on state
 		switch (state) {
 			case DVR_STOPPED:
@@ -245,7 +245,7 @@ int main(void) {
 					dvr_record();			// Initiate recording
 					state = DVR_RECORDING;	// Transition to "recording" state
 				 }
-				 
+
 				 if(play){
 					 printf("Playback...\n");
 					 dvr_play();
@@ -253,12 +253,12 @@ int main(void) {
 				 }
 				break;
 			case DVR_RECORDING:
-				
+
 				//TODO: Implement stop functionality
 				if (stopped) {
 					pageCount = 1;	// Finish recording last page
 				}
-			
+
 				// Write samples to SD card when buffer page is full
 				if (newPage) {
 					newPage = 0;	// Acknowledge new page flag
@@ -267,7 +267,7 @@ int main(void) {
 					// Stop is flagged when the last page has been recorded
 					stop = 0;							// Acknowledge stop flag
 					wave_write(buffer_readPage(), 512);	// Write final page
-					wave_close();						// Finalise WAVE file 
+					wave_close();						// Finalise WAVE file
 					printf("DONE!\n");					// Print status to console
 					state = DVR_STOPPED;				// Transition to stopped state111
 					record = 0;
@@ -275,13 +275,13 @@ int main(void) {
 					stopped = 0;
 				}
 				break;
-			case DVR_PLAYING:				
+			case DVR_PLAYING:
 				// TODO: Implement playback functionality
 
 				if(stopped){
-					stop = 1;			
+					stop = 1;
 				}
-				
+
 				if(newPage){
 					newPage = 0;
 					printf("%i", pageCount);
@@ -305,8 +305,7 @@ int main(void) {
 				break;
 
 		} // END switch(state)
-			
+
 	} // END for(;;)
 
 }
-
